@@ -1,0 +1,5 @@
+[INFO] Python 3.11 OK (/home/piero.palacios/KNN_on_hpc/.venv/bin/python3)
+[INFO] job_id=34133 task_id=134
+[INFO] combo: N_JOBS=4 N_SAMPLES=300 N_FEATURES=13 K=5
+[INFO] tag=strong output=results/knn_strong_p4_n300_k5_34133_134.jsonl
+[OK] n_jobs=4 ns=300 nf=13 fit_avg=0.001s pred_avg=0.013s acc_avg=0.4167 f1_avg=0.2954 precision_avg=0.2288 recall_avg=0.4167

@@ -1,0 +1,4 @@
+Checked 46 packages in 15ms
+[INFO] Dataset 45 cargado desde cache: /home/piero.palacios/KNN_on_hpc/.cache/ucimlrepo_45.joblib
+[INFO] Imputando 3 valor(es) NaN con la media de cada columna.
+[INFO] Aproximación de uso de memoria (dataset) ~ 0.00 GB
