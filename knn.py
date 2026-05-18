@@ -20,6 +20,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 DATASET_ID = 45
 CACHE_PATH = Path(__file__).resolve().parent / ".cache" / f"ucimlrepo_{DATASET_ID}.joblib"
+LOCAL_DATA_PATH = Path(__file__).resolve().parent / "data" / "processed.cleveland.data"
 EXPERIMENTS = ("samples", "features", "jobs")
 
 
@@ -27,8 +28,52 @@ def approx_mem_bytes(*arrays):
     return int(sum(np.asarray(arr).nbytes for arr in arrays))
 
 
-def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH):
+def write_dataset_cache(cache_path, X, y):
     cache_path = Path(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.parent / f"{cache_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+
+    try:
+        dump({"X": X, "y": y}, tmp_path)
+        os.replace(tmp_path, cache_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def load_dataset_from_local_file(data_path=LOCAL_DATA_PATH):
+    data_path = Path(data_path)
+    if not data_path.exists():
+        raise FileNotFoundError(data_path)
+
+    raw = np.genfromtxt(
+        data_path,
+        delimiter=",",
+        dtype=float,
+        missing_values="?",
+        filling_values=np.nan,
+    )
+
+    if raw.ndim != 2 or raw.shape[1] != 14:
+        raise ValueError(f"Formato inesperado en {data_path}: shape={raw.shape}")
+
+    X = raw[:, :-1]
+    y = raw[:, -1]
+
+    if np.isnan(y).any():
+        raise ValueError(f"La columna objetivo contiene valores faltantes en {data_path}")
+
+    if np.isnan(X).any():
+        col_medians = np.nanmedian(X, axis=0)
+        missing_idx = np.where(np.isnan(X))
+        X[missing_idx] = np.take(col_medians, missing_idx[1])
+
+    return X.astype(float), y.astype(int)
+
+
+def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH, data_path=LOCAL_DATA_PATH):
+    cache_path = Path(cache_path)
+    data_path = Path(data_path)
 
     if cache_path.exists():
         try:
@@ -42,21 +87,28 @@ def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH):
                 file=sys.stderr,
             )
 
+    if data_path.exists():
+        X, y = load_dataset_from_local_file(data_path)
+        write_dataset_cache(cache_path, X, y)
+        print(f"[INFO] Dataset {dataset_id} cargado desde archivo local: {data_path}", file=sys.stderr)
+        print(f"[INFO] Cache actualizado en: {cache_path}", file=sys.stderr)
+        return X, y
+
     from ucimlrepo import fetch_ucirepo
 
-    dataset = fetch_ucirepo(id=dataset_id)
+    try:
+        dataset = fetch_ucirepo(id=dataset_id)
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo descargar el dataset desde UCI y no existe ni cache local ni archivo local versionado utilizable. "
+            f"Cache esperado: {cache_path}. Archivo esperado: {data_path}. "
+            "En HPC, use el dataset versionado en el repo o precargue el cache desde el login node."
+        ) from exc
+
     X = np.asarray(dataset.data.features)
     y = dataset.data.targets.to_numpy().ravel()
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = cache_path.parent / f"{cache_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
-
-    try:
-        dump({"X": X, "y": y}, tmp_path)
-        os.replace(tmp_path, cache_path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+    write_dataset_cache(cache_path, X, y)
 
     print(f"[INFO] Dataset {dataset_id} descargado y guardado en cache: {cache_path}", file=sys.stderr)
     return X, y

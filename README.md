@@ -11,8 +11,10 @@ KNN_on_hpc/
 ├── knn_samples.sh
 ├── knn_features.sh
 ├── knn_jobs.sh
+├── prepare_cache.sh
 ├── slurm_env.sh
 ├── plot_knn.sh
+├── data/
 ├── logs/
 ├── results/
 ├── plots/
@@ -44,6 +46,14 @@ pip install numpy scikit-learn joblib matplotlib ucimlrepo
 ```
 
 ## Ejecución en HPC
+
+El repo incluye el archivo versionado `data/processed.cleveland.data`, por lo que los compute nodes no necesitan internet para leer el dataset.
+
+Opcionalmente, antes de usar `sbatch`, puede precargar el cache desde el login node:
+
+```bash
+bash prepare_cache.sh
+```
 
 Enviar cada experimento por separado:
 
@@ -137,6 +147,8 @@ Cada línea contiene:
 ## Notas
 
 - El dataset se cachea en `.cache/`.
+- `knn.py` prioriza `data/processed.cleveland.data` antes de intentar cualquier descarga.
+- Si los nodos de cómputo no tienen acceso a internet, el archivo versionado en `data/` es suficiente; `bash prepare_cache.sh` solo adelanta la creación del cache local.
 - `parallel_backend("loky", n_jobs=n_jobs)` se mantiene para las corridas paralelas.
 - `algorithm="brute"` se fija en sklearn para comparar con el costo teórico de KNN por fuerza bruta.
 - Se fijan las variables BLAS a `1` para evitar sobre-suscripción.
