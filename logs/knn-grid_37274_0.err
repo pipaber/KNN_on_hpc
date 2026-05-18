@@ -1,0 +1,4 @@
+[INFO] Dataset 45 cargado desde archivo local: /home/piero.palacios/KNN_on_hpc/data/processed.cleveland.data
+[INFO] Cache actualizado en: /home/piero.palacios/KNN_on_hpc/.cache/ucimlrepo_45.joblib
+[INFO] experiment=samples factor=1 n_jobs=1 base_train=212 base_test=91 base_d=13
+[INFO] transformed train=212 test=91 d=13 mem~0.03 MB

@@ -1,0 +1,2 @@
+[INFO] experiment=features factor=2 n_jobs=1 output=results/features/knn_features_p1_f2_37311_36.jsonl
+[OK] experiment=features factor=2 n_jobs=1 train=212 test=91 d=26 fit_avg=0.0004s pred_avg=0.0008s total_avg=0.0012s

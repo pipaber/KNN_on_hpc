@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_DIR="${1:-${SCRIPT_DIR}/results}"
 PLOTS_DIR="${2:-${SCRIPT_DIR}/plots}"
-TIME_METRIC="${3:-pred_time_s_avg}"
+TIME_METRIC="${3:-total_time_s_avg}"
 PYTHON_BIN="${PYTHON:-python3}"
 
 mkdir -p "${PLOTS_DIR}"

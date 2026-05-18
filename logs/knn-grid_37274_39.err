@@ -1,0 +1,3 @@
+[INFO] Dataset 45 cargado desde cache: /home/piero.palacios/KNN_on_hpc/.cache/ucimlrepo_45.joblib
+[INFO] experiment=features factor=2 n_jobs=8 base_train=212 base_test=91 base_d=13
+[INFO] transformed train=212 test=91 d=26 mem~0.07 MB

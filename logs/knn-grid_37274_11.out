@@ -1,0 +1,2 @@
+[INFO] experiment=samples factor=2 n_jobs=32 output=results/samples/knn_samples_p32_f2_37286_11.jsonl
+[OK] experiment=samples factor=2 n_jobs=32 train=424 test=91 d=13 fit_avg=0.0004s pred_avg=0.0009s total_avg=0.0013s
