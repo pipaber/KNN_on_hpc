@@ -10,8 +10,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/slurm_env.sh"
+PROJECT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+source "${PROJECT_DIR}/slurm_env.sh"
 
 FACTORS=(1 2 4 8)
 IDX=${SLURM_ARRAY_TASK_ID:-0}
