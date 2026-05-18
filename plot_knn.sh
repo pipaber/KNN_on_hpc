@@ -81,16 +81,22 @@ def aggregate_rows(rows, key_fields):
     return aggregated
 
 
-def configure_xy(ax, title, xlabel, ylabel):
+def configure_panel(ax, title, ylabel):
     ax.set_title(title)
-    ax.set_xlabel(xlabel)
+    ax.set_xlabel("p (#hilos / n_jobs)")
     ax.set_ylabel(ylabel)
+    ax.set_xscale("log", base=2)
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.8)
 
 
-def configure_process_axis(ax, title, ylabel):
-    configure_xy(ax, title, "p (#hilos / n_jobs)", ylabel)
-    ax.set_xscale("log", base=2)
+def panel_legend(ax, ncol=2):
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.20),
+        ncol=ncol,
+        fontsize=8,
+        frameon=True,
+    )
 
 
 def add_overhead_box(ax, label, overhead_time, overhead_fraction):
@@ -115,224 +121,171 @@ if not rows:
 rows_by_experiment = defaultdict(list)
 for row in rows:
     experiment = row.get("experiment")
-    if experiment in {"samples", "features", "jobs"}:
+    if experiment in {"samples", "features"}:
         rows_by_experiment[experiment].append(row)
     else:
-        print(
-            f"[WARN] Ignorando fila sin experimento valido: {row.get('_source_file', '')}",
-            file=sys.stderr,
-        )
+        print(f"[WARN] Ignorando fila sin experimento valido: {row.get('_source_file', '')}", file=sys.stderr)
+
+panel_specs = {
+    "samples": {
+        "title": "Muestras replicadas",
+        "label": lambda row: f"f={int(row['factor'])} (n={int(row['n_train_used'])})",
+    },
+    "features": {
+        "title": "Atributos replicados",
+        "label": lambda row: f"f={int(row['factor'])} (d={int(row['d_used'])})",
+    },
+}
+
+aggregated = {}
+for experiment in ("samples", "features"):
+    aggregated[experiment] = aggregate_rows(
+        rows_by_experiment.get(experiment, []),
+        ["experiment", "factor", "n_jobs", "n_train_used", "n_test_used", "d_used"],
+    )
 
 summary_rows = []
 colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
+# Time figure
+fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.1), dpi=150)
+has_any = False
+for ax, experiment in zip(axes, ("samples", "features")):
+    points = aggregated[experiment]
+    configure_panel(ax, panel_specs[experiment]["title"], f"Tiempo ({time_metric}) [s]")
+    if not points:
+        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes, ha="center", va="center")
+        continue
 
-# Samples: T ~ O(n_train) with d and p fixed.
-sample_points = aggregate_rows(
-    rows_by_experiment.get("samples", []),
-    ["experiment", "factor", "n_jobs", "n_train_used", "n_test_used", "d_used"],
-)
-if sample_points:
-    sample_points.sort(key=lambda row: int(row["factor"]))
-    base_row = next((row for row in sample_points if int(row["factor"]) == 1), sample_points[0])
-    base_n = int(base_row["n_train_used"])
-    base_t = float(base_row["time_s"])
+    has_any = True
+    factors = sorted({int(row["factor"]) for row in points})
+    max_factor = max(factors)
+    max_overhead = (math.nan, math.nan)
+    max_label = ""
 
-    xs = [int(row["n_train_used"]) for row in sample_points]
-    ys = [float(row["time_s"]) for row in sample_points]
-    ideal = [base_t * (x / base_n) for x in xs]
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.8), dpi=150)
-    configure_xy(ax, "KNN - tiempo vs n_train replicado", "n_train", f"Tiempo ({time_metric}) [s]")
-    ax.plot(xs, ys, marker="o", linewidth=1.8, label="medido")
-    ax.plot(xs, ideal, linestyle="--", linewidth=2.0, color="black", label="teoria lineal")
-    overhead_time = ys[-1] - ideal[-1]
-    overhead_fraction = overhead_time / ys[-1] if ys[-1] > 0 else math.nan
-    add_overhead_box(ax, f"f={int(sample_points[-1]['factor'])}", overhead_time, overhead_fraction)
-    ax.legend(fontsize=9)
-    fig.tight_layout()
-    fig.savefig(plots_dir / "knn_samples_time.png")
-    plt.close(fig)
-
-    for row, ideal_time in zip(sample_points, ideal):
-        time_s = float(row["time_s"])
-        summary_rows.append(
-            {
-                "experiment": "samples",
-                "factor": int(row["factor"]),
-                "n_jobs": int(row["n_jobs"]),
-                "n_train_used": int(row["n_train_used"]),
-                "n_test_used": int(row["n_test_used"]),
-                "d_used": int(row["d_used"]),
-                "time_metric": time_metric,
-                "time_s": time_s,
-                "t1_s": base_t,
-                "ideal_time_s": ideal_time,
-                "speedup": math.nan,
-                "efficiency": math.nan,
-                "overhead_time_s": time_s - ideal_time,
-                "overhead_fraction": (time_s - ideal_time) / time_s if time_s > 0 else math.nan,
-            }
-        )
-
-
-# Features: T ~ O(d) with n_train and p fixed.
-feature_points = aggregate_rows(
-    rows_by_experiment.get("features", []),
-    ["experiment", "factor", "n_jobs", "n_train_used", "n_test_used", "d_used"],
-)
-if feature_points:
-    feature_points.sort(key=lambda row: int(row["factor"]))
-    base_row = next((row for row in feature_points if int(row["factor"]) == 1), feature_points[0])
-    base_d = int(base_row["d_used"])
-    base_t = float(base_row["time_s"])
-
-    xs = [int(row["d_used"]) for row in feature_points]
-    ys = [float(row["time_s"]) for row in feature_points]
-    ideal = [base_t * (x / base_d) for x in xs]
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.8), dpi=150)
-    configure_xy(ax, "KNN - tiempo vs atributos replicados", "d (#atributos)", f"Tiempo ({time_metric}) [s]")
-    ax.plot(xs, ys, marker="o", linewidth=1.8, label="medido")
-    ax.plot(xs, ideal, linestyle="--", linewidth=2.0, color="black", label="teoria lineal")
-    overhead_time = ys[-1] - ideal[-1]
-    overhead_fraction = overhead_time / ys[-1] if ys[-1] > 0 else math.nan
-    add_overhead_box(ax, f"f={int(feature_points[-1]['factor'])}", overhead_time, overhead_fraction)
-    ax.legend(fontsize=9)
-    fig.tight_layout()
-    fig.savefig(plots_dir / "knn_features_time.png")
-    plt.close(fig)
-
-    for row, ideal_time in zip(feature_points, ideal):
-        time_s = float(row["time_s"])
-        summary_rows.append(
-            {
-                "experiment": "features",
-                "factor": int(row["factor"]),
-                "n_jobs": int(row["n_jobs"]),
-                "n_train_used": int(row["n_train_used"]),
-                "n_test_used": int(row["n_test_used"]),
-                "d_used": int(row["d_used"]),
-                "time_metric": time_metric,
-                "time_s": time_s,
-                "t1_s": base_t,
-                "ideal_time_s": ideal_time,
-                "speedup": math.nan,
-                "efficiency": math.nan,
-                "overhead_time_s": time_s - ideal_time,
-                "overhead_fraction": (time_s - ideal_time) / time_s if time_s > 0 else math.nan,
-            }
-        )
-
-
-# Jobs: same plot family for all factors; interpretation of strong/weak is left to the curves.
-job_points = aggregate_rows(
-    rows_by_experiment.get("jobs", []),
-    ["experiment", "factor", "n_jobs", "n_train_used", "n_test_used", "d_used"],
-)
-if job_points:
-    factors = sorted({int(row["factor"]) for row in job_points})
-    points_by_factor = {}
-    for factor in factors:
-        factor_rows = [row for row in job_points if int(row["factor"]) == factor]
+    for idx, factor in enumerate(factors):
+        factor_rows = [row for row in points if int(row["factor"]) == factor]
         factor_rows.sort(key=lambda row: int(row["n_jobs"]))
-        if any(int(row["n_jobs"]) == 1 for row in factor_rows):
-            points_by_factor[factor] = factor_rows
+        if not any(int(row["n_jobs"]) == 1 for row in factor_rows):
+            continue
 
-    if points_by_factor:
-        fig, ax = plt.subplots(figsize=(7.4, 4.9), dpi=150)
-        configure_process_axis(ax, "KNN - tiempo vs n_jobs", f"Tiempo ({time_metric}) [s]")
+        color = colors[idx % len(colors)]
+        xs = [int(row["n_jobs"]) for row in factor_rows]
+        ys = [float(row["time_s"]) for row in factor_rows]
+        t1 = next(float(row["time_s"]) for row in factor_rows if int(row["n_jobs"]) == 1)
+        ideal_times = [t1 / p for p in xs]
 
-        max_factor = max(points_by_factor)
-        max_overhead = (math.nan, math.nan)
-        max_label = ""
+        ax.plot(xs, ys, marker="o", linewidth=1.8, color=color, label=panel_specs[experiment]["label"](factor_rows[0]))
+        ax.plot(xs, ideal_times, linestyle="--", linewidth=1.2, color=color, alpha=0.75)
 
-        for idx, factor in enumerate(sorted(points_by_factor)):
-            factor_rows = points_by_factor[factor]
-            color = colors[idx % len(colors)]
-            xs = [int(row["n_jobs"]) for row in factor_rows]
-            ys = [float(row["time_s"]) for row in factor_rows]
-            t1 = next(float(row["time_s"]) for row in factor_rows if int(row["n_jobs"]) == 1)
-            ideal_times = [t1 / p for p in xs]
-            n_train = int(factor_rows[0]["n_train_used"])
-            ax.plot(xs, ys, marker="o", linewidth=1.8, color=color, label=f"f={factor} (n={n_train})")
-            ax.plot(xs, ideal_times, linestyle="--", linewidth=1.2, color=color, alpha=0.75)
+        if factor == max_factor:
+            overhead_time = ys[-1] - ideal_times[-1]
+            overhead_fraction = overhead_time / ys[-1] if ys[-1] > 0 else math.nan
+            max_overhead = (overhead_time, overhead_fraction)
+            max_label = f"f={factor}, p={xs[-1]}"
 
-            if factor == max_factor:
-                overhead_time = ys[-1] - ideal_times[-1]
-                overhead_fraction = overhead_time / ys[-1] if ys[-1] > 0 else math.nan
-                max_overhead = (overhead_time, overhead_fraction)
-                max_label = f"f={factor}, p={xs[-1]}"
+        for row, ideal_time in zip(factor_rows, ideal_times):
+            tp = float(row["time_s"])
+            speedup = t1 / tp if tp > 0 else math.nan
+            efficiency = speedup / int(row["n_jobs"]) if math.isfinite(speedup) else math.nan
+            summary_rows.append(
+                {
+                    "experiment": experiment,
+                    "factor": int(row["factor"]),
+                    "n_jobs": int(row["n_jobs"]),
+                    "n_train_used": int(row["n_train_used"]),
+                    "n_test_used": int(row["n_test_used"]),
+                    "d_used": int(row["d_used"]),
+                    "time_metric": time_metric,
+                    "time_s": tp,
+                    "t1_s": t1,
+                    "ideal_time_s": ideal_time,
+                    "speedup": speedup,
+                    "efficiency": efficiency,
+                    "overhead_time_s": tp - ideal_time,
+                    "overhead_fraction": (tp - ideal_time) / tp if tp > 0 else math.nan,
+                }
+            )
 
-            for row, ideal_time in zip(factor_rows, ideal_times):
-                tp = float(row["time_s"])
-                speedup = t1 / tp if tp > 0 else math.nan
-                efficiency = speedup / int(row["n_jobs"]) if math.isfinite(speedup) else math.nan
-                summary_rows.append(
-                    {
-                        "experiment": "jobs",
-                        "factor": int(row["factor"]),
-                        "n_jobs": int(row["n_jobs"]),
-                        "n_train_used": int(row["n_train_used"]),
-                        "n_test_used": int(row["n_test_used"]),
-                        "d_used": int(row["d_used"]),
-                        "time_metric": time_metric,
-                        "time_s": tp,
-                        "t1_s": t1,
-                        "ideal_time_s": ideal_time,
-                        "speedup": speedup,
-                        "efficiency": efficiency,
-                        "overhead_time_s": tp - ideal_time,
-                        "overhead_fraction": (tp - ideal_time) / tp if tp > 0 else math.nan,
-                    }
-                )
+    add_overhead_box(ax, max_label, max_overhead[0], max_overhead[1])
+    panel_legend(ax, ncol=2)
 
-        add_overhead_box(ax, max_label, max_overhead[0], max_overhead[1])
-        ax.legend(fontsize=8)
-        fig.tight_layout()
-        fig.savefig(plots_dir / "knn_jobs_time.png")
-        plt.close(fig)
+fig.tight_layout(rect=(0.0, 0.10, 1.0, 1.0))
+if has_any:
+    fig.savefig(plots_dir / "knn_time.png")
+plt.close(fig)
 
-        fig, ax = plt.subplots(figsize=(7.4, 4.9), dpi=150)
-        configure_process_axis(ax, "KNN - speedup vs n_jobs", "Speedup S = T1 / Tp")
+# Speedup figure
+fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.1), dpi=150)
+has_any = False
+for ax, experiment in zip(axes, ("samples", "features")):
+    points = aggregated[experiment]
+    configure_panel(ax, panel_specs[experiment]["title"], "Speedup S = T1 / Tp")
+    if not points:
+        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes, ha="center", va="center")
+        continue
 
-        p_union = sorted({int(row["n_jobs"]) for rows_ in points_by_factor.values() for row in rows_})
-        ax.plot(p_union, p_union, linestyle="--", linewidth=2.0, color="black", label="ideal S = p")
+    has_any = True
+    p_union = sorted({int(row["n_jobs"]) for row in points})
+    ax.plot(p_union, p_union, linestyle="--", linewidth=2.0, color="black", label="ideal S = p")
 
-        for idx, factor in enumerate(sorted(points_by_factor)):
-            factor_rows = points_by_factor[factor]
-            color = colors[idx % len(colors)]
-            xs = [int(row["n_jobs"]) for row in factor_rows]
-            ys = [float(row["time_s"]) for row in factor_rows]
-            t1 = next(float(row["time_s"]) for row in factor_rows if int(row["n_jobs"]) == 1)
-            speedups = [t1 / y if y > 0 else math.nan for y in ys]
-            ax.plot(xs, speedups, marker="o", linewidth=1.8, color=color, label=f"f={factor}")
+    factors = sorted({int(row["factor"]) for row in points})
+    for idx, factor in enumerate(factors):
+        factor_rows = [row for row in points if int(row["factor"]) == factor]
+        factor_rows.sort(key=lambda row: int(row["n_jobs"]))
+        if not any(int(row["n_jobs"]) == 1 for row in factor_rows):
+            continue
 
-        ax.legend(fontsize=8)
-        fig.tight_layout()
-        fig.savefig(plots_dir / "knn_jobs_speedup.png")
-        plt.close(fig)
+        color = colors[idx % len(colors)]
+        xs = [int(row["n_jobs"]) for row in factor_rows]
+        ys = [float(row["time_s"]) for row in factor_rows]
+        t1 = next(float(row["time_s"]) for row in factor_rows if int(row["n_jobs"]) == 1)
+        speedups = [t1 / y if y > 0 else math.nan for y in ys]
+        ax.plot(xs, speedups, marker="o", linewidth=1.8, color=color, label=panel_specs[experiment]["label"](factor_rows[0]))
 
-        fig, ax = plt.subplots(figsize=(7.4, 4.9), dpi=150)
-        configure_process_axis(ax, "KNN - eficiencia vs n_jobs", "Eficiencia E = S / p")
-        ax.plot(p_union, [1.0 for _ in p_union], linestyle="--", linewidth=2.0, color="black", label="ideal E = 1")
+    panel_legend(ax, ncol=2)
 
-        for idx, factor in enumerate(sorted(points_by_factor)):
-            factor_rows = points_by_factor[factor]
-            color = colors[idx % len(colors)]
-            xs = [int(row["n_jobs"]) for row in factor_rows]
-            ys = [float(row["time_s"]) for row in factor_rows]
-            t1 = next(float(row["time_s"]) for row in factor_rows if int(row["n_jobs"]) == 1)
-            speedups = [t1 / y if y > 0 else math.nan for y in ys]
-            efficiencies = [s / p if math.isfinite(s) else math.nan for s, p in zip(speedups, xs)]
-            ax.plot(xs, efficiencies, marker="o", linewidth=1.8, color=color, label=f"f={factor}")
+fig.tight_layout(rect=(0.0, 0.10, 1.0, 1.0))
+if has_any:
+    fig.savefig(plots_dir / "knn_speedup.png")
+plt.close(fig)
 
-        ax.set_ylim(bottom=0)
-        ax.legend(fontsize=8)
-        fig.tight_layout()
-        fig.savefig(plots_dir / "knn_jobs_efficiency.png")
-        plt.close(fig)
+# Efficiency figure
+fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.1), dpi=150)
+has_any = False
+for ax, experiment in zip(axes, ("samples", "features")):
+    points = aggregated[experiment]
+    configure_panel(ax, panel_specs[experiment]["title"], "Eficiencia E = S / p")
+    if not points:
+        ax.text(0.5, 0.5, "Sin datos", transform=ax.transAxes, ha="center", va="center")
+        continue
 
+    has_any = True
+    p_union = sorted({int(row["n_jobs"]) for row in points})
+    ax.plot(p_union, [1.0 for _ in p_union], linestyle="--", linewidth=2.0, color="black", label="ideal E = 1")
+
+    factors = sorted({int(row["factor"]) for row in points})
+    for idx, factor in enumerate(factors):
+        factor_rows = [row for row in points if int(row["factor"]) == factor]
+        factor_rows.sort(key=lambda row: int(row["n_jobs"]))
+        if not any(int(row["n_jobs"]) == 1 for row in factor_rows):
+            continue
+
+        color = colors[idx % len(colors)]
+        xs = [int(row["n_jobs"]) for row in factor_rows]
+        ys = [float(row["time_s"]) for row in factor_rows]
+        t1 = next(float(row["time_s"]) for row in factor_rows if int(row["n_jobs"]) == 1)
+        speedups = [t1 / y if y > 0 else math.nan for y in ys]
+        efficiencies = [s / p if math.isfinite(s) else math.nan for s, p in zip(speedups, xs)]
+        ax.plot(xs, efficiencies, marker="o", linewidth=1.8, color=color, label=panel_specs[experiment]["label"](factor_rows[0]))
+
+    ax.set_ylim(bottom=0)
+    panel_legend(ax, ncol=2)
+
+fig.tight_layout(rect=(0.0, 0.10, 1.0, 1.0))
+if has_any:
+    fig.savefig(plots_dir / "knn_efficiency.png")
+plt.close(fig)
 
 summary_csv = plots_dir / "knn_scalability_summary.csv"
 with summary_csv.open("w", newline="", encoding="utf-8") as f:

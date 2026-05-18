@@ -8,9 +8,6 @@ Estudio del costo computacional de **KNN** sobre el dataset **Heart Disease** de
 KNN_on_hpc/
 ├── knn.py
 ├── knn.sh
-├── knn_samples.sh
-├── knn_features.sh
-├── knn_jobs.sh
 ├── prepare_cache.sh
 ├── slurm_env.sh
 ├── plot_knn.sh
@@ -29,58 +26,75 @@ Primero se hace un split fijo `70/30` del dataset completo:
 - prueba: `91` filas
 - atributos base: `13`
 
-Luego se construyen tres experimentos:
+La grilla SLURM combina dos familias de experimentos:
 
 - `samples`: replica solo `X_train` e `y_train` con factores `1, 2, 4, 8, 16`
 - `features`: replica columnas de `X_train` y `X_test` con factores `1, 2, 4, 8`
-- `jobs`: replica `X_train` e `y_train` con factores `1, 2, 4, 8, 16` y barre `n_jobs = 1, 2, 4, 8`
 
-El análisis de escalabilidad fuerte y débil no está codificado como modo de ejecución. Se interpreta a partir de las curvas de `jobs` en los plots.
+Ambos casos se ejecutan con:
+
+- `n_jobs = 1, 2, 4, 8, 16, 32`
+
+El objetivo final es producir solo 3 figuras:
+
+- `time`
+- `speedup`
+- `efficiency`
+
+Cada figura tiene dos paneles:
+
+- panel `samples`
+- panel `features`
 
 ## Dependencias
 
+Con `uv`:
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install numpy scikit-learn joblib matplotlib ucimlrepo
+uv sync
 ```
 
-## Ejecución en HPC
+## Dataset
 
 El repo incluye el archivo versionado `data/processed.cleveland.data`, por lo que los compute nodes no necesitan internet para leer el dataset.
 
-Opcionalmente, antes de usar `sbatch`, puede precargar el cache desde el login node:
+Opcionalmente, puede precargar el cache desde el login node:
 
 ```bash
 bash prepare_cache.sh
 ```
 
-Enviar cada experimento por separado:
+## Ejecución en HPC
+
+Enviar toda la grilla con un solo script:
 
 ```bash
-sbatch knn_samples.sh
-sbatch knn_features.sh
-sbatch knn_jobs.sh
+sbatch knn.sh
 ```
 
 Variables opcionales:
 
 ```bash
-sbatch --export=N_REPS=10,N_NEIGHBORS=5 knn_jobs.sh
+sbatch --export=ALL,N_REPS=10,N_NEIGHBORS=5 knn.sh
 ```
 
-Cada script escribe resultados en su propia carpeta:
+La grilla total tiene:
+
+- `5 x 6 = 30` combinaciones para `samples`
+- `4 x 6 = 24` combinaciones para `features`
+- total `54` tareas en el array
+
+Los resultados quedan separados en:
 
 - `results/samples`
 - `results/features`
-- `results/jobs`
 
 ## Ejecución local
 
-Ejemplo para muestras:
+Ejemplo para `samples`:
 
 ```bash
-export N_JOBS=1
+export N_JOBS=8
 python3 knn.py \
   --experiment samples \
   --factor 4 \
@@ -90,17 +104,17 @@ python3 knn.py \
   --output results/local_samples.jsonl
 ```
 
-Ejemplo para `n_jobs`:
+Ejemplo para `features`:
 
 ```bash
-export N_JOBS=4
+export N_JOBS=8
 python3 knn.py \
-  --experiment jobs \
+  --experiment features \
   --factor 4 \
   --n_neighbors 5 \
   --n_reps 5 \
   --test_size 0.3 \
-  --output results/local_jobs.jsonl
+  --output results/local_features.jsonl
 ```
 
 ## Plots
@@ -125,11 +139,9 @@ Métricas disponibles:
 
 Archivos generados:
 
-- `knn_samples_time.png`
-- `knn_features_time.png`
-- `knn_jobs_time.png`
-- `knn_jobs_speedup.png`
-- `knn_jobs_efficiency.png`
+- `knn_time.png`
+- `knn_speedup.png`
+- `knn_efficiency.png`
 - `knn_scalability_summary.csv`
 
 ## Salida JSONL

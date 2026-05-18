@@ -21,7 +21,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 DATASET_ID = 45
 CACHE_PATH = Path(__file__).resolve().parent / ".cache" / f"ucimlrepo_{DATASET_ID}.joblib"
 LOCAL_DATA_PATH = Path(__file__).resolve().parent / "data" / "processed.cleveland.data"
-EXPERIMENTS = ("samples", "features", "jobs")
+EXPERIMENTS = ("samples", "features")
 
 
 def approx_mem_bytes(*arrays):
@@ -149,7 +149,7 @@ def build_experiment_data(experiment, factor, X_train, X_test, y_train, y_test):
     if factor < 1:
         raise ValueError(f"El factor debe ser >= 1. Recibido: {factor}")
 
-    if experiment in {"samples", "jobs"}:
+    if experiment == "samples":
         X_train_exp = np.tile(X_train, (factor, 1))
         y_train_exp = np.tile(y_train, factor)
         X_test_exp = X_test
