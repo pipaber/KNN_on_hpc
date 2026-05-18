@@ -1,5 +1,0 @@
-[INFO] Python 3.11 OK (/home/piero.palacios/KNN_on_hpc/.venv/bin/python3)
-[INFO] job_id=34105 task_id=106
-[INFO] combo: N_JOBS=16 N_SAMPLES=212 N_FEATURES=13 K=3
-[INFO] tag=grid_weak output=results/knn_grid_weak_p16_n212_k3_34105_106.jsonl
-[OK] n_jobs=16 ns=212 nf=13 fit_avg=0.001s pred_avg=0.015s acc_avg=0.5581 f1_avg=0.4480 precision_avg=0.3882 recall_avg=0.5581

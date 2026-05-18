@@ -1,5 +1,0 @@
-[INFO] Python 3.11 OK (/home/piero.palacios/KNN_on_hpc/.venv/bin/python3)
-[INFO] job_id=34083 task_id=84
-[INFO] combo: N_JOBS=1 N_SAMPLES=150 N_FEATURES=13 K=5
-[INFO] tag=grid output=results/knn_grid_p1_n150_k5_34083_84.jsonl
-[OK] n_jobs=1 ns=150 nf=13 fit_avg=0.000s pred_avg=0.001s acc_avg=0.4333 f1_avg=0.3748 precision_avg=0.3302 recall_avg=0.4333

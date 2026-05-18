@@ -1,13 +1,17 @@
 from pathlib import Path
-from joblib import parallel_backend, dump, load
-import os, time, sys, argparse, json
-import numpy as np
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
-from ucimlrepo import fetch_ucirepo
+from joblib import dump, load, parallel_backend
+import argparse
+import json
+import os
+import sys
+import time
 
-# ===== Evitar sobre-suscripción BLAS =====
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+
+# Evitar sobre-suscripcion BLAS: el paralelismo se controla con N_JOBS/joblib.
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -16,10 +20,12 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 DATASET_ID = 45
 CACHE_PATH = Path(__file__).resolve().parent / ".cache" / f"ucimlrepo_{DATASET_ID}.joblib"
+EXPERIMENTS = ("samples", "features", "jobs")
 
-def approx_mem_bytes(n_samples, n_features, dtype_bytes=8):
-    # X: n_samples * n_features, y: n_samples (int64 ~8B), factor ~2.5 por copias/overhead
-    return int(2.5 * (n_samples * n_features * dtype_bytes + n_samples * 8))
+
+def approx_mem_bytes(*arrays):
+    return int(sum(np.asarray(arr).nbytes for arr in arrays))
+
 
 def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH):
     cache_path = Path(cache_path)
@@ -28,7 +34,7 @@ def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH):
         try:
             cached = load(cache_path)
             print(f"[INFO] Dataset {dataset_id} cargado desde cache: {cache_path}", file=sys.stderr)
-            return cached["X"], np.asarray(cached["y"]).ravel()
+            return np.asarray(cached["X"]), np.asarray(cached["y"]).ravel()
         except Exception as exc:
             print(
                 f"[WARN] No se pudo leer el cache {cache_path} ({exc}). "
@@ -36,8 +42,10 @@ def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH):
                 file=sys.stderr,
             )
 
+    from ucimlrepo import fetch_ucirepo
+
     dataset = fetch_ucirepo(id=dataset_id)
-    X = dataset.data.features
+    X = np.asarray(dataset.data.features)
     y = dataset.data.targets.to_numpy().ravel()
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -53,120 +61,178 @@ def load_dataset_with_cache(dataset_id=DATASET_ID, cache_path=CACHE_PATH):
     print(f"[INFO] Dataset {dataset_id} descargado y guardado en cache: {cache_path}", file=sys.stderr)
     return X, y
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="KNN classifier")
-    parser.add_argument("--n_neighbors", type=int, default=5, help="Number of neighbors")
-    parser.add_argument("--n_samples", type=int, default=1000, help="Number of samples")
-    parser.add_argument("--n_features", type=int, default=100, help="Number of features")
-    parser.add_argument("--n_reps", type=int, default=10, help="Number of iterations")
-    parser.add_argument("--test_size", type=float, default=0.2, help="Test size")
-    parser.add_argument("--scaling_tag", type=str, default="", help="Scaling experiment label")
-    parser.add_argument("--output", type=str, default="results.jsonl", help="Output file")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="KNN scalability experiments")
+    parser.add_argument("--experiment", choices=EXPERIMENTS, required=True, help="Experiment to run")
+    parser.add_argument("--factor", type=int, default=1, help="Replication factor f")
+    parser.add_argument("--n_neighbors", type=int, default=5, help="Number of neighbors")
+    parser.add_argument("--n_reps", type=int, default=30, help="Number of repetitions")
+    parser.add_argument("--test_size", type=float, default=0.3, help="Test size fraction")
+    parser.add_argument("--random_state", type=int, default=42, help="Random seed")
+    parser.add_argument("--output", type=str, default="results.jsonl", help="Output JSONL file")
     return parser.parse_args()
+
+
+def split_dataset(X, y, test_size, random_state):
+    try:
+        return train_test_split(
+            X,
+            y,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=y,
+        )
+    except ValueError:
+        print("[WARN] No se pudo usar stratify=y; se realiza split sin estratificacion.", file=sys.stderr)
+        return train_test_split(
+            X,
+            y,
+            test_size=test_size,
+            random_state=random_state,
+        )
+
+
+def build_experiment_data(experiment, factor, X_train, X_test, y_train, y_test):
+    if factor < 1:
+        raise ValueError(f"El factor debe ser >= 1. Recibido: {factor}")
+
+    if experiment in {"samples", "jobs"}:
+        X_train_exp = np.tile(X_train, (factor, 1))
+        y_train_exp = np.tile(y_train, factor)
+        X_test_exp = X_test
+        y_test_exp = y_test
+        applied_factor = factor
+    elif experiment == "features":
+        X_train_exp = np.tile(X_train, (1, factor))
+        X_test_exp = np.tile(X_test, (1, factor))
+        y_train_exp = y_train
+        y_test_exp = y_test
+        applied_factor = factor
+    else:
+        raise ValueError(f"Experimento desconocido: {experiment}")
+
+    return X_train_exp, X_test_exp, y_train_exp, y_test_exp, applied_factor
+
 
 def main():
     args = parse_args()
-
-    # Paralelismo solo desde N_JOBS
     n_jobs = int(os.environ.get("N_JOBS", 1))
 
-    # Load dataset
     X, y = load_dataset_with_cache()
+    X_train, X_test, y_train, y_test = split_dataset(
+        X,
+        y,
+        test_size=args.test_size,
+        random_state=args.random_state,
+    )
 
-    total_n_samples, total_n_features = X.shape
-    effective_n_samples = min(args.n_samples, total_n_samples)
-    effective_n_features = min(args.n_features, total_n_features)
+    X_train = np.asarray(X_train)
+    X_test = np.asarray(X_test)
+    y_train = np.asarray(y_train).ravel()
+    y_test = np.asarray(y_test).ravel()
 
-    if effective_n_samples != args.n_samples or effective_n_features != args.n_features:
-        print(
-            "[WARN] Dataset id=45 no tiene el tamaño solicitado. "
-            f"Usando n_samples={effective_n_samples} y n_features={effective_n_features} "
-            f"(disponibles: {total_n_samples}, {total_n_features}).",
-            file=sys.stderr,
-        )
+    base_n_train = int(X_train.shape[0])
+    base_n_test = int(X_test.shape[0])
+    base_d = int(X_train.shape[1])
 
-    rng = np.random.default_rng(42)
-    sample_idx = rng.choice(total_n_samples, size=effective_n_samples, replace=False)
-    X = X.iloc[sample_idx, :effective_n_features]
-    y = y[sample_idx]
+    X_train_exp, X_test_exp, y_train_exp, y_test_exp, applied_factor = build_experiment_data(
+        args.experiment,
+        args.factor,
+        X_train,
+        X_test,
+        y_train,
+        y_test,
+    )
 
-    memB = approx_mem_bytes(effective_n_samples, effective_n_features)
-    print(f"[INFO] Aproximación de uso de memoria (dataset) ~ {memB/1e9:.2f} GB", file=sys.stderr)
+    n_train_used = int(X_train_exp.shape[0])
+    n_test_used = int(X_test_exp.shape[0])
+    d_used = int(X_train_exp.shape[1])
 
-    # Split dataset
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=args.test_size, random_state=42)
+    mem_bytes = approx_mem_bytes(X_train_exp, X_test_exp, y_train_exp, y_test_exp)
+    print(
+        f"[INFO] experiment={args.experiment} factor={applied_factor} n_jobs={n_jobs} "
+        f"base_train={base_n_train} base_test={base_n_test} base_d={base_d}",
+        file=sys.stderr,
+    )
+    print(
+        f"[INFO] transformed train={n_train_used} test={n_test_used} d={d_used} "
+        f"mem~{mem_bytes / 1e6:.2f} MB",
+        file=sys.stderr,
+    )
 
-    # Model
-    knn = KNeighborsClassifier(n_neighbors=args.n_neighbors, n_jobs=n_jobs)
-
-    fitting_times, prediction_times = [], []
-    f1_scores, accuracies, precisions, recalls = [], [], [], []
+    fitting_times = []
+    prediction_times = []
+    f1_scores = []
+    accuracies = []
+    precisions = []
+    recalls = []
 
     for _ in range(args.n_reps):
-        # Training
-        t_0 = time.perf_counter()
+        knn = KNeighborsClassifier(
+            algorithm="brute",
+            n_neighbors=args.n_neighbors,
+            n_jobs=n_jobs,
+        )
 
+        t_fit_start = time.perf_counter()
         with parallel_backend("loky", n_jobs=n_jobs):
-            knn.fit(X_train, y_train)
+            knn.fit(X_train_exp, y_train_exp)
+        fit_time = time.perf_counter() - t_fit_start
+        fitting_times.append(fit_time)
 
-        fit_t = time.perf_counter() - t_0
-        fitting_times.append(fit_t)
+        t_pred_start = time.perf_counter()
+        with parallel_backend("loky", n_jobs=n_jobs):
+            y_pred = knn.predict(X_test_exp)
+        pred_time = time.perf_counter() - t_pred_start
+        prediction_times.append(pred_time)
 
-        # Prediction
+        f1_scores.append(f1_score(y_test_exp, y_pred, average="weighted", zero_division=0))
+        accuracies.append(accuracy_score(y_test_exp, y_pred))
+        precisions.append(precision_score(y_test_exp, y_pred, average="weighted", zero_division=0))
+        recalls.append(recall_score(y_test_exp, y_pred, average="weighted", zero_division=0))
 
-        t_1 = time.perf_counter()
-        y_pred = knn.predict(X_test)
-        pred_t = time.perf_counter() - t_1
-        prediction_times.append(pred_t)
-
-        # Metrics
-        f1_scores.append(f1_score(y_test, y_pred, average="weighted", zero_division=0))
-        accuracies.append(accuracy_score(y_test, y_pred))
-        precisions.append(precision_score(y_test, y_pred, average="weighted", zero_division=0))
-        recalls.append(recall_score(y_test, y_pred, average="weighted", zero_division=0))
-
-    fitting_avg = float(np.mean(fitting_times))
-    prediction_avg = float(np.mean(prediction_times))
-    f1_avg = float(np.mean(f1_scores))
-    accuracy_avg = float(np.mean(accuracies))
-    precision_avg = float(np.mean(precisions))
-    recall_avg = float(np.mean(recalls))
-
-    # Save Results to .jsonl format to output
+    fit_avg = float(np.mean(fitting_times))
+    pred_avg = float(np.mean(prediction_times))
+    total_avg = fit_avg + pred_avg
 
     results = {
         "dataset_id": DATASET_ID,
+        "experiment": args.experiment,
+        "factor": applied_factor,
         "n_jobs": n_jobs,
         "n_neighbors": args.n_neighbors,
-        "n_samples": effective_n_samples,
-        "n_features": effective_n_features,
         "reps": args.n_reps,
-        "requested_n_samples": args.n_samples,
-        "requested_n_features": args.n_features,
-        "n_samples_used": effective_n_samples,
-        "n_features_used": effective_n_features,
         "test_size": args.test_size,
-        "scaling_tag": args.scaling_tag,
-        "fit_time_s_avg": round(fitting_avg, 4),
-        "pred_time_s_avg": round(prediction_avg, 4),
-        "f1_avg": round(f1_avg, 4),
-        "accuracy_avg": round(accuracy_avg, 4),
-        "precision_avg": round(precision_avg, 4),
-        "recall_avg": round(recall_avg, 4),
+        "random_state": args.random_state,
+        "base_n_train": base_n_train,
+        "base_n_test": base_n_test,
+        "base_d": base_d,
+        "n_train_used": n_train_used,
+        "n_test_used": n_test_used,
+        "d_used": d_used,
+        "fit_time_s_avg": round(fit_avg, 6),
+        "pred_time_s_avg": round(pred_avg, 6),
+        "total_time_s_avg": round(total_avg, 6),
+        "f1_avg": round(float(np.mean(f1_scores)), 6),
+        "accuracy_avg": round(float(np.mean(accuracies)), 6),
+        "precision_avg": round(float(np.mean(precisions)), 6),
+        "recall_avg": round(float(np.mean(recalls)), 6),
         "slurm_job_id": os.environ.get("SLURM_JOB_ID", ""),
         "slurm_array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID", ""),
     }
 
-    with open(args.output, "a", encoding="utf-8") as f:
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(results) + "\n")
 
     print(
-        f"[OK] n_jobs={n_jobs} ns={effective_n_samples} nf={effective_n_features} "
-        f"fit_avg={fitting_avg:.3f}s pred_avg={prediction_avg:.3f}s "
-        f"acc_avg={accuracy_avg:.4f} f1_avg={f1_avg:.4f} "
-        f"precision_avg={precision_avg:.4f} recall_avg={recall_avg:.4f}"
+        f"[OK] experiment={args.experiment} factor={applied_factor} n_jobs={n_jobs} "
+        f"train={n_train_used} test={n_test_used} d={d_used} "
+        f"fit_avg={fit_avg:.4f}s pred_avg={pred_avg:.4f}s total_avg={total_avg:.4f}s"
     )
+
 
 if __name__ == "__main__":
     main()

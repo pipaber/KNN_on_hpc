@@ -1,188 +1,142 @@
-# KNN on HPC — Scalability Study
+# KNN on HPC
 
-Scalability analysis of a **K-Nearest Neighbors (KNN)** classifier running on a High-Performance Computing (HPC) cluster managed with **SLURM**. The experiment evaluates strong scaling, weak scaling, and a full parameter grid using the [Heart Disease dataset (UCI id=45)](https://archive.ics.uci.edu/dataset/45/heart+disease).
+Estudio del costo computacional de **KNN** sobre el dataset **Heart Disease** de UCI (`id=45`), con foco en tiempo de ejecución, speedup, eficiencia y overhead.
 
----
+## Estructura
 
-## Project Structure
-
-```
+```text
 KNN_on_hpc/
-├── knn.py          # KNN classifier with dataset caching and metrics
-├── knn.sh          # SLURM batch script (144-job array)
-├── plot_knn.sh     # Script to generate scalability plots from results
-├── logs/           # SLURM stdout/stderr logs
-├── results/        # Output .jsonl files (one per job)
-├── plots/          # Generated PNG plots and summary CSV
-└── .cache/         # Cached UCI dataset (auto-generated)
+├── knn.py
+├── knn.sh
+├── knn_samples.sh
+├── knn_features.sh
+├── knn_jobs.sh
+├── slurm_env.sh
+├── plot_knn.sh
+├── logs/
+├── results/
+├── plots/
+└── .cache/
 ```
 
----
+## Diseño del experimento
 
-## Dataset
+Primero se hace un split fijo `70/30` del dataset completo:
 
-| Property     | Value                        |
-|--------------|------------------------------|
-| Source       | UCI ML Repository            |
-| Dataset ID   | 45 (Heart Disease)           |
-| Samples      | 303                          |
-| Features     | 13                           |
+- entrenamiento: `212` filas
+- prueba: `91` filas
+- atributos base: `13`
 
-The dataset is automatically downloaded on first run and cached locally under `.cache/` to avoid redundant downloads in subsequent SLURM tasks.
+Luego se construyen tres experimentos:
 
----
+- `samples`: replica solo `X_train` e `y_train` con factores `1, 2, 4, 8, 16`
+- `features`: replica columnas de `X_train` y `X_test` con factores `1, 2, 4, 8`
+- `jobs`: replica `X_train` e `y_train` con factores `1, 2, 4, 8, 16` y barre `n_jobs = 1, 2, 4, 8`
 
-## Experiment Design
+El análisis de escalabilidad fuerte y débil no está codificado como modo de ejecución. Se interpreta a partir de las curvas de `jobs` en los plots.
 
-The experiment sweeps a full grid of parameters to study:
+## Dependencias
 
-| Axis               | Values                          |
-|--------------------|---------------------------------|
-| **Processes (p)**  | 1, 2, 4, 8, 16, 32             |
-| **Samples (N)**    | 53, 75, 106, 150, 212, 300     |
-| **Neighbors (k)**  | 1, 3, 5, 11                    |
-| **Features**       | 13 (fixed)                     |
-| **Repetitions**    | 30 per combination             |
-| **Test size**      | 30%                            |
-
-**Total combinations:** 6 × 6 × 4 = **144 SLURM array jobs**
-
-### Scaling Tags
-
-Each job is automatically labeled:
-- `strong` — maximum N (300) with varying p
-- `weak` — diagonal combinations where `S_IDX == J_IDX` (N ≈ N_base × √p)
-- `grid` — all remaining combinations
-
----
-
-## Requirements
-
-- Python ≥ 3.9
-- SLURM (for HPC execution)
-- Python packages:
-
-```
-numpy
-scikit-learn
-joblib
-matplotlib
-ucimlrepo
-```
-
-Install dependencies:
-
-```
-pip install numpy scikit-learn joblib matplotlib ucimlrepo
-```
-
-Or with a virtual environment:
-
-```
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install numpy scikit-learn joblib matplotlib ucimlrepo
 ```
 
----
+## Ejecución en HPC
 
-## Usage
-
-### 1. Submit SLURM job array
+Enviar cada experimento por separado:
 
 ```bash
-sbatch knn.sh
+sbatch knn_samples.sh
+sbatch knn_features.sh
+sbatch knn_jobs.sh
 ```
 
-This submits 144 jobs (indices 0–143). Each job writes its results to a `.jsonl` file inside `results/`.
+Variables opcionales:
 
-### 2. Run locally (single combination)
+```bash
+sbatch --export=N_REPS=10,N_NEIGHBORS=5 knn_jobs.sh
+```
+
+Cada script escribe resultados en su propia carpeta:
+
+- `results/samples`
+- `results/features`
+- `results/jobs`
+
+## Ejecución local
+
+Ejemplo para muestras:
+
+```bash
+export N_JOBS=1
+python3 knn.py \
+  --experiment samples \
+  --factor 4 \
+  --n_neighbors 5 \
+  --n_reps 5 \
+  --test_size 0.3 \
+  --output results/local_samples.jsonl
+```
+
+Ejemplo para `n_jobs`:
 
 ```bash
 export N_JOBS=4
 python3 knn.py \
-  --n_samples 300 \
-  --n_features 13 \
+  --experiment jobs \
+  --factor 4 \
   --n_neighbors 5 \
-  --n_reps 10 \
+  --n_reps 5 \
   --test_size 0.3 \
-  --scaling_tag manual \
-  --output results/local_test.jsonl
+  --output results/local_jobs.jsonl
 ```
 
-### 3. Generate plots
+## Plots
+
+Generar gráficas a partir de `results/`:
 
 ```bash
 bash plot_knn.sh [results_dir] [plots_dir] [time_metric]
 ```
 
-Default values:
-- `results_dir` → `./results`
-- `plots_dir` → `./plots`
-- `time_metric` → `pred_time_s_avg`
+Valores por defecto:
 
-Available metrics: `pred_time_s_avg`, `fit_time_s_avg`, `total_time_s_avg`
+- `results_dir`: `./results`
+- `plots_dir`: `./plots`
+- `time_metric`: `pred_time_s_avg`
 
-Example:
+Métricas disponibles:
 
-```bash
-bash plot_knn.sh results plots pred_time_s_avg
-```
+- `fit_time_s_avg`
+- `pred_time_s_avg`
+- `total_time_s_avg`
 
----
+Archivos generados:
 
-## Output
+- `knn_samples_time.png`
+- `knn_features_time.png`
+- `knn_jobs_time.png`
+- `knn_jobs_speedup.png`
+- `knn_jobs_efficiency.png`
+- `knn_scalability_summary.csv`
 
-### Results (`.jsonl`)
+## Salida JSONL
 
-Each line in a result file is a JSON object with fields including:
+Cada línea contiene:
 
-| Field              | Description                        |
-|--------------------|------------------------------------|
-| `n_jobs`           | Number of parallel workers         |
-| `n_neighbors`      | K value used                       |
-| `n_samples`        | Samples used                       |
-| `n_features`       | Features used                      |
-| `fit_time_s_avg`   | Average fit time (seconds)         |
-| `pred_time_s_avg`  | Average prediction time (seconds)  |
-| `accuracy_avg`     | Average accuracy                   |
-| `f1_avg`           | Average F1-score (weighted)        |
-| `precision_avg`    | Average precision (weighted)       |
-| `recall_avg`       | Average recall (weighted)          |
-| `scaling_tag`      | `strong`, `weak`, or `grid`        |
+- `experiment`
+- `factor`
+- `n_jobs`
+- `base_n_train`, `base_n_test`, `base_d`
+- `n_train_used`, `n_test_used`, `d_used`
+- `fit_time_s_avg`, `pred_time_s_avg`, `total_time_s_avg`
+- `accuracy_avg`, `f1_avg`, `precision_avg`, `recall_avg`
 
-### Plots
+## Notas
 
-For each value of k, three PNG plots are generated:
-
-- `knn_time_k{k}.png` — Execution time vs. number of processes
-- `knn_speedup_k{k}.png` — Speedup (S = T1/Tp) vs. number of processes
-- `knn_efficiency_k{k}.png` — Efficiency (E = S/p) vs. number of processes
-
-A summary CSV (`knn_scalability_summary.csv`) is also saved in `plots/`.
-
----
-
-## Key Implementation Details
-
-- **BLAS over-subscription prevention:** Environment variables `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, etc. are all set to `1` so that parallelism is controlled exclusively via `N_JOBS` (joblib/loky).
-- **Caching:** The UCI dataset is cached using `joblib.dump` with atomic writes (`os.replace`) to avoid race conditions in parallel SLURM jobs.
-- **Metrics:** Each repetition records fit time, prediction time, accuracy, F1, precision, and recall. Averages are reported.
-
----
-
-## SLURM Configuration
-
-| Parameter         | Value          |
-|-------------------|----------------|
-| `--cpus-per-task` | 32             |
-| `--time`          | 00:30:00       |
-| `--nodes`         | 1              |
-| `--ntasks`        | 1              |
-| `--array`         | 0–143          |
-
----
-
-## License
-
-This project is for academic/research purposes.
+- El dataset se cachea en `.cache/`.
+- `parallel_backend("loky", n_jobs=n_jobs)` se mantiene para las corridas paralelas.
+- `algorithm="brute"` se fija en sklearn para comparar con el costo teórico de KNN por fuerza bruta.
+- Se fijan las variables BLAS a `1` para evitar sobre-suscripción.
