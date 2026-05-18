@@ -129,7 +129,7 @@ Valores por defecto:
 
 - `results_dir`: `./results`
 - `plots_dir`: `./plots`
-- `time_metric`: `pred_time_s_avg`
+- `time_metric`: `total_time_s_avg`
 
 Métricas disponibles:
 
@@ -164,3 +164,35 @@ Cada línea contiene:
 - `parallel_backend("loky", n_jobs=n_jobs)` se mantiene para las corridas paralelas.
 - `algorithm="brute"` se fija en sklearn para comparar con el costo teórico de KNN por fuerza bruta.
 - Se fijan las variables BLAS a `1` para evitar sobre-suscripción.
+
+## Análisis gráfico de overhead y escalabilidad
+
+### Overhead (comparación con la expresión teórica)
+
+Se usa como referencia teórica:
+
+- `T_p^{ideal} = T_1 / p`
+- overhead experimental por corrida: `O_p = T_p - T_1/p` (equivalente a la forma clásica `T_o = pT_p - T_1`).
+
+En las gráficas de tiempo, las curvas ideales (punteadas) decrecen como `1/p`, mientras que las curvas medidas (continuas) se mantienen casi planas. La separación entre ambas curvas representa el overhead. Para `p=32`, se observa `Overhead/Tp ≈ 96.8%–96.9%` en ambos experimentos, lo que indica que la mayor parte del tiempo total corresponde a costos de paralelización y no a trabajo útil.
+
+**Conclusión:** el comportamiento real se aparta del ideal y el overhead domina para valores altos de `p`.
+
+### Escalabilidad fuerte
+
+Con tamaño de problema fijo (cada curva con `factor` fijo), al aumentar `p`:
+
+- el tiempo no cae como `1/p`,
+- el speedup se mantiene cercano a `1` (solo alrededor de `2` en casos pequeños),
+- la eficiencia cae rápidamente (hasta ~`0.03–0.06` en `p=32`).
+
+**Conclusión:** la escalabilidad fuerte observada es limitada.
+
+### Escalabilidad débil
+
+Al analizar el crecimiento de problema junto con `p` (trayectorias diagonales `factor`–`n_jobs`):
+
+- en `samples`, el tiempo se mantiene del mismo orden, pero con degradación para `p` altos,
+- en `features`, el tiempo es casi constante hasta `p=8`, con menor margen de análisis para `p=16` y `p=32` por el rango de factores disponible.
+
+**Conclusión:** la escalabilidad débil es aceptable en baja/media concurrencia, pero se degrada al subir `p`, principalmente por overhead.
